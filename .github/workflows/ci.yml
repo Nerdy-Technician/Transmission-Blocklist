@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  blocklist:
+    name: Blocklist format
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Every non-empty, non-comment line must be a hostname; duplicates are
+      # reported as warnings.
+      - name: Validate Blocklist.txt
+        run: |
+          python3 - <<'PY'
+          import collections, re, sys
+          host = re.compile(r"[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?(?:\.[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?)*\.?")
+          with open("Blocklist.txt", encoding="utf-8") as fh:
+              lines = fh.read().splitlines()
+          bad = 0
+          seen = collections.Counter()
+          for n, raw in enumerate(lines, 1):
+              line = raw.strip()
+              if not line or line.startswith("#"):
+                  continue
+              seen[line.lower()] += 1
+              if not host.fullmatch(line):
+                  bad += 1
+                  if bad <= 50:
+                      print(f"::error file=Blocklist.txt,line={n}::not a valid hostname: {line!r}")
+          dups = sum(c - 1 for c in seen.values() if c > 1)
+          if dups:
+              print(f"::warning file=Blocklist.txt::{dups} duplicate entries")
+          if not seen:
+              print("::error file=Blocklist.txt::blocklist is empty")
+              bad += 1
+          print(f"{sum(seen.values())} entries, {bad} invalid, {dups} duplicates")
+          sys.exit(1 if bad else 0)
+          PY
